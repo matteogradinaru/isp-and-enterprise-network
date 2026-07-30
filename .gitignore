@@ -1,0 +1,26 @@
+# Virtual Machine Disk Images
+*.gns3project
+*.qcow2
+*.vmdk
+*.vdi
+*.iso
+*.bin
+*.image
+*.qemu
+
+# GNS3
+project-files/
+*.log
+*.tmp
+*.lock
+
+# IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Environment
+.env*
+*.pem
+*.key
