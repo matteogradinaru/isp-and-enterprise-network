@@ -1,51 +1,70 @@
 # Topology 2: MPLS L3VPN Backbone & IPsec Overlays
 
-## Architecture Summary
-
-A complete Managed Service Provider (MSP) MPLS core supporting multi-tenant L3VPNs and end-to-end customer cryptographic tunneling using IKEv2 and IPsec.
+This lab simulates an ISP / Managed Service Provider backbone delivering multi-tenant L3VPN connectivity over an MPLS core, augmented with customer-managed route-based IPsec tunnels (IKEv2) for end-to-end zero-trust encryption across the provider cloud.
 
 ---
 
-## Key Protocols & Features
+## Topology Architecture
 
-- **MPLS / LDP Core:** Penultimate Hop Popping (PHP), label assignment via LDP, and dual redundant P-routers (`P-1`, `P-2`).
-- **MP-BGP VPNv4 Control Plane:** Route Distinguishers (RD) and Route Targets (RT) ensuring complete isolation between customer VPNs:
-  - `KLANT-A`: RD `65100:100`
-  - `KLANT-B`: RD `65100:200`
-- **IPsec Over L3VPN:** End-to-end customer encryption across the provider core using route-based IKEv2 tunnels with AES-CBC-256 and SHA-256.
+![Topology 2 Architecture](screenshots/topology2.png)
 
 ---
 
-## Verification & Proof
+## Design & Configuration Details
 
-### 1. MPLS Label Forwarding (LFIB)
+### 1. Provider Core Underlay (IS-IS + MPLS/LDP)
 
-LFIB entries on `PE-1` demonstrating label push, swap, and PHP pop actions alongside VRF-specific allocations:<br>
+- **Core IGP:** The provider backbone (`PE-1`, `P-1`, `P-2`, `PE-2`) runs IS-IS as a single Level-2 routing domain with wide metrics, ensuring fast convergence and loop-free reachability between all loopback interfaces.
+- **Label Distribution:** LDP is enabled on all core links (`mpls ip`). Labels are dynamically mapped to loopback endpoints, enabling Penultimate Hop Popping (PHP) on P-routers to reduce lookup overhead on egress PEs.
+
+### 2. MP-BGP VPNv4 Control Plane
+
+- **Multiprotocol BGP:** PE routers peer directly over iBGP via their `Loopback0` addresses under AS `65100`, activating the `vpnv4` address-family with extended communities (`send-community extended`).
+- **VRF Routing & Route Targets:**
+  - `KLANT-A`: Configured with Route Distinguisher `65100:100` and import/export Route Target `65100:100`.
+  - `KLANT-B`: Configured with Route Distinguisher `65100:200` and import/export Route Target `65100:200`.
+- **PE-CE Routing:** Customer routes and connected interfaces are redistributed into MP-BGP on the PE routers, allowing customer sites to communicate across the provider core while keeping their routing tables completely segregated.
+
+### 3. Customer IPsec Overlay (Zero-Trust over L3VPN)
+
+While MPLS L3VPN provides traffic segmentation, provider core nodes could theoretically inspect transit customer packets. To ensure full confidentiality, Tenant A establishes a route-based IPsec tunnel between CE routers:
+
+- **Phase 1 (IKEv2):** Configured with AES-CBC-256 encryption, SHA-256 hashing, and Diffie-Hellman Group 14 using pre-shared keys.
+- **Phase 2 (IPsec):** Configured with an `esp-aes 256 esp-sha256-hmac` transform-set applied to virtual tunnel interfaces (`Tunnel0`).
+- **Encrypted Payload:** Traffic between internal tenant networks (`10.1.0.0/24` and `10.2.0.0/24`) is routed through `Tunnel0` (`10.99.0.0/30`), completely hiding internal customer data from the service provider.
+
+---
+
+## Verification & Test Results
+
+### 1. MPLS Label Forwarding Information Base (LFIB)
+
+Checking `show mpls forwarding-table` on `PE-1` verifies label assignments, label push/swap operations, and Penultimate Hop Popping (`Pop Label`) behavior toward P-routers:
 ![MPLS Forwarding Table](screenshots/mpls-forwarding-table.png)
 
-### 2. MP-BGP VPNv4 Multi-Tenancy
+### 2. MP-BGP VPNv4 Routes
 
-Validation of route propagation across both customer instances (`KLANT-A` and `KLANT-B`):<br>
+Checking `show bgp vpnv4 unicast all` confirms that routes from both customer VRFs are tagged with their respective Route Distinguishers and propagated across the MP-BGP mesh:
 ![MP-BGP VPNv4](screenshots/bgp-vpnv4-unicast.png)
 
 ### 3. IKEv2 Phase 1 Status
 
-IKEv2 Security Association status confirming `READY` state and cipher negotiation:<br>
+Checking `show crypto ikev2 sa` on `CE1-A` verifies successful negotiation with `CE2-A` in the active `READY` state:
 ![IKEv2 SA](screenshots/crypto-ikev2.png)
 
-### 4. IPsec Packet Encapsulation
+### 4. IPsec Phase 2 SA & Packet Counters
 
-IPsec Phase 2 SA metrics verifying incrementing packet encapsulation and encryption counters across `Tunnel0`:<br>
+Inspection of `show crypto ipsec sa` proves active encryption and decryption, with monotonically increasing `pkts encaps` and `pkts decaps` counters on `Tunnel0`:
 ![IPsec SA Counters](screenshots/ipsec-tunnel.png)
 
-### 5. Reachability & Tenant Isolation
+### 5. Data Plane Reachability & Multi-Tenant Isolation
 
-Proof of end-to-end communication across the encrypted tunnel (`10.99.0.2`) alongside drop behavior toward tenant B (`10.99.1.2`):<br>
+Ping tests from `CE1-A` confirm smooth end-to-end reachability across the encrypted tunnel (`10.99.0.2`), while packets targeting Tenant B (`10.99.1.2`) are dropped, proving strict multi-tenant boundary enforcement:
 ![Ping Verification](screenshots/ping-ce1-a.png)
 
 ---
 
-## Device Configurations
+## Configuration Files
 
 All device configurations are stored in the [`configs/`](./configs/) directory:
 
